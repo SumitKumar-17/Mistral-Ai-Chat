@@ -3,19 +3,23 @@ import { prisma } from '@/lib/prisma';
 import { authenticateUser } from '../auth/route';
 
 export async function GET(request: NextRequest) {
+    console.log('Search API called');
     try {
         const user = await authenticateUser(request);
+        console.log('User authenticated:', user?.id);
         if (!user) {
             return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
         }
 
         const url = new URL(request.url);
         const query = url.searchParams.get('q');
+        console.log('Search query:', query);
 
         if (!query) {
             return NextResponse.json([]);
         }
 
+        console.log('Executing Prisma query...');
         const users = await prisma.user.findMany({
             where: {
                 username: {
@@ -34,6 +38,7 @@ export async function GET(request: NextRequest) {
             },
             take: 10
         });
+        console.log('Prisma query result:', users);
 
         return NextResponse.json(users);
     } catch (error) {

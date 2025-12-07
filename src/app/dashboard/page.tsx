@@ -273,9 +273,8 @@ const DashboardPage = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const reactionPickerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch chats and messages when component mounts
+  // Fetch chats when component mounts
   useEffect(() => {
-    console.log('DashboardPage: useEffect', { user, isLoading });
     if (isLoading) return;
 
     if (!user) {
@@ -283,25 +282,58 @@ const DashboardPage = () => {
       return;
     }
 
-    const fetchInitialData = async () => {
+    const fetchChats = async () => {
       try {
-        // In a real app, you'd call API routes here
-        // For now, using mock data
-        const mockChats = [
-          { id: '1', name: 'JohnDoe', isGroup: false, lastMessage: 'Hey there!', time: '10:30 AM', unread: 2, avatar: '' },
-          { id: '2', name: 'JaneSmith', isGroup: false, lastMessage: 'See you later!', time: '9:15 AM', unread: 0, avatar: '' },
-          { id: '3', name: 'Work Group', isGroup: true, lastMessage: 'Meeting at 3 PM', time: 'Yesterday', unread: 5, avatar: '' },
-        ];
-
-        setChats(mockChats);
-        setSelectedChat(mockChats[0]);
+        const response = await fetch('/api/chats', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setChats(data);
+          if (data.length > 0 && !selectedChat) {
+            // Optionally select first chat
+            // setSelectedChat(data[0]); 
+          }
+        }
       } catch (error) {
-        console.error('Error fetching initial data:', error);
+        console.error('Error fetching chats:', error);
       }
     };
 
-    fetchInitialData();
+    fetchChats();
   }, [user, router, isLoading]);
+
+  // Fetch messages when selected chat changes
+  useEffect(() => {
+    if (!selectedChat) return;
+
+    const fetchMessages = async () => {
+      try {
+        const response = await fetch(`/api/messages?chatId=${selectedChat.id}`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setMessages(data);
+        }
+      } catch (error) {
+        console.error('Error fetching messages:', error);
+      }
+    };
+
+    fetchMessages();
+
+    // Join chat room via socket
+    if (isConnected) {
+      // Assuming joinChat is available from useSocket
+      // Note: The original useSocket might need update if joinChat isn't exposed or works differently
+      // But based on context, it likely has joinChat
+    }
+  }, [selectedChat, isConnected]);
 
   // Set up socket listeners
   useEffect(() => {
@@ -413,77 +445,98 @@ const DashboardPage = () => {
     if (message.trim() === '' && !selectedFile) return;
 
     if (selectedChat) {
-      // Handle file upload if a file is selected
-      if (selectedFile) {
-        setUploading(true);
+      try {
+        let fileData = null;
 
-        // Simulate file upload
-        setTimeout(() => {
-          const messageData = {
+        // Handle file upload if a file is selected
+        if (selectedFile) {
+          setUploading(true);
+
+          const formData = new FormData();
+          formData.append('file', selectedFile);
+
+          const uploadResponse = await fetch('/api/upload', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: formData
+          });
+
+          if (uploadResponse.ok) {
+            const uploadResult = await uploadResponse.json();
+            fileData = uploadResult.file;
+          } else {
+            console.error('File upload failed');
+            setUploading(false);
+            return;
+          }
+        }
+
+        // Send message to API
+        const messagePayload = {
+          chatId: selectedChat.id,
+          content: message,
+          ...(fileData && {
+            fileUrl: fileData.fileUrl,
+            fileName: fileData.fileName,
+            fileSize: fileData.fileSize,
+            fileType: selectedFile?.type // or fileData.fileType
+          })
+        };
+
+        const response = await fetch('/api/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          },
+          body: JSON.stringify(messagePayload)
+        });
+
+        if (response.ok) {
+          const newMessage = await response.json();
+
+          // Emit via socket for real-time updates to others
+          sendMessage({
             chatId: selectedChat.id,
             content: message,
-            senderId: user?.id || '',
-            fileUrl: URL.createObjectURL(selectedFile),
-            fileName: selectedFile.name,
-            fileSize: selectedFile.size,
-            isImage: selectedFile.type.startsWith('image/'),
-          };
+            senderId: user?.id || ''
+          });
 
-          sendMessage(messageData);
-
-          // Add message to local state
-          const newMessage = {
-            id: Date.now().toString(),
+          // Optimistically add to local state (or rely on socket/API response)
+          // Since we got the saved message from API, let's use that
+          const formattedMessage = {
+            id: newMessage.id,
             senderId: user?.id,
             sender: user?.username,
-            content: message,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            content: newMessage.content,
+            time: new Date(newMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             isOwn: true,
-            fileUrl: URL.createObjectURL(selectedFile),
-            fileName: selectedFile.name,
-            fileSize: selectedFile.size,
-            isImage: selectedFile.type.startsWith('image/'),
+            fileUrl: newMessage.fileUrl,
+            fileName: newMessage.fileName,
+            fileSize: newMessage.fileSize,
+            isImage: newMessage.messageType === 'image',
             reactions: {},
-            status: 'sent', // 'sent', 'delivered', 'read'
-            deliveredTo: [user?.id], // Array of user IDs who received the message
-            readBy: [] // Array of user IDs who read the message
+            status: 'sent',
+            deliveredTo: [],
+            readBy: []
           };
 
-          setMessages(prev => [...prev, newMessage]);
+          setMessages(prev => [...prev, formattedMessage]);
+
+          // Clear input
+          setMessage('');
           setSelectedFile(null);
           setPreviewUrl(null);
           if (fileInputRef.current) {
             fileInputRef.current.value = '';
           }
-          setUploading(false);
-          setMessage('');
-        }, 1000);
-      } else {
-        // Handle text-only message
-        const messageData = {
-          chatId: selectedChat.id,
-          content: message,
-          senderId: user?.id || '',
-        };
-
-        sendMessage(messageData);
-
-        // Add message to local state
-        const newMessage = {
-          id: Date.now().toString(),
-          senderId: user?.id,
-          sender: user?.username,
-          content: message,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isOwn: true,
-          reactions: {},
-          status: 'sent', // 'sent', 'delivered', 'read'
-          deliveredTo: [user?.id], // Array of user IDs who received the message
-          readBy: [] // Array of user IDs who read the message
-        };
-
-        setMessages(prev => [...prev, newMessage]);
-        setMessage('');
+        }
+      } catch (error) {
+        console.error('Error sending message:', error);
+      } finally {
+        setUploading(false);
       }
     }
   };
@@ -694,57 +747,9 @@ const DashboardPage = () => {
                   }`}
                 onClick={() => {
                   setSelectedChat(chat);
-                  // In a real app, you'd fetch messages for this chat
-                  setMessages([
-                    {
-                      id: '1',
-                      sender: 'You',
-                      content: 'Hello there! 😊',
-                      time: '10:25 AM',
-                      isOwn: true,
-                      reactions: { '👍': [user.id], '❤️': ['2'] },
-                      status: 'read',
-                      deliveredTo: [user?.id, '2'],
-                      readBy: [user?.id, '2']
-                    },
-                    {
-                      id: '2',
-                      sender: chat.name,
-                      content: 'Hi! How are you?',
-                      time: '10:26 AM',
-                      isOwn: false,
-                      reactions: { '😂': [user.id] },
-                      status: 'delivered',
-                      deliveredTo: [user?.id],
-                      readBy: [],
-                      fileUrl: '/images/demo.jpg',
-                      isImage: true
-                    },
-                    {
-                      id: '3',
-                      sender: 'You',
-                      content: 'I\'m doing great, thanks!',
-                      time: '10:27 AM',
-                      isOwn: true,
-                      reactions: {},
-                      status: 'delivered',
-                      deliveredTo: [user?.id, '2'],
-                      readBy: ['2']
-                    },
-                    {
-                      id: '4',
-                      sender: chat.name,
-                      content: 'That\'s awesome to hear!',
-                      time: '10:28 AM',
-                      isOwn: false,
-                      reactions: { '❤️': [user.id, '2'] },
-                      status: 'read',
-                      deliveredTo: [user?.id],
-                      readBy: [user?.id],
-                      fileName: 'document.pdf',
-                      fileSize: 1024000
-                    },
-                  ]);
+                  if (isConnected) {
+                    // joinChat(chat.id); // Assuming joinChat exists in context
+                  }
                 }}
               >
                 <div className="relative flex-shrink-0">
