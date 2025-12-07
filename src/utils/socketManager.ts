@@ -10,13 +10,14 @@ class SocketManager {
       return this.socket;
     }
 
-    this.socket = io('http://localhost:3000', {
+    this.socket = io({
       path: '/api/socket/io',
+      autoConnect: false,
       transports: ['websocket', 'polling'],
     });
 
     this.userId = userId;
-    
+
     this.socket.on('connect', () => {
       console.log('Connected to socket server with ID:', this.socket?.id);
       // Join user-specific room

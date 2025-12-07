@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
         });
 
         // Transform to match frontend expectation
-        const formattedMessages = messages.map(msg => ({
+        const formattedMessages = messages.map((msg: any) => ({
             id: msg.id,
             content: msg.content,
             senderId: msg.senderId,
@@ -123,6 +123,69 @@ export async function POST(request: NextRequest) {
             where: { id: chatId },
             data: { updatedAt: new Date() }
         });
+
+        // AI Integration Logic
+        // Check if this chat involves the AI user
+        const chat = await prisma.chat.findUnique({
+            where: { id: chatId },
+            include: { members: { include: { user: true } } }
+        });
+
+        const aiMember = chat?.members.find((m: any) => m.user.email === 'ai@mistral.com');
+
+        if (aiMember && aiMember.userId !== user.id) {
+            // It's a chat with AI, and the sender is not the AI (avoid loops)
+
+            // Trigger AI response asynchronously (fire and forget for API response speed,
+            // but in serverless/Next.js this might be cut off.
+            // Ideally use a queue or await it if it's fast enough. Mistral is usually fast.
+            // Let's await it to ensure it's sent.)
+
+            (async () => {
+                try {
+                    const { getMistralResponse } = await import('@/lib/mistral');
+
+                    // Fetch last few messages for context
+                    const history = await prisma.message.findMany({
+                        where: { chatId },
+                        orderBy: { createdAt: 'desc' },
+                        take: 10
+                    });
+
+                    // Format history for Mistral (reverse to chronological)
+                    const formattedHistory = history.reverse().map((msg: any) => ({
+                        role: msg.senderId === aiMember.userId ? 'assistant' as const : 'user' as const,
+                        content: msg.content
+                    }));
+
+                    // Remove the very last message (which is the one we just saved) from history
+                    // because we pass it as the 'message' argument to getMistralResponse
+                    // Actually getMistralResponse takes (message, history).
+                    // So history should NOT include the current message.
+                    const context = formattedHistory.slice(0, -1);
+
+                    const response = await getMistralResponse(content || 'Shared a file', context);
+                    const aiResponseContent = typeof response === 'string' ? response : JSON.stringify(response);
+
+                    // Save AI response
+                    await prisma.message.create({
+                        data: {
+                            chatId,
+                            senderId: aiMember.userId,
+                            content: aiResponseContent || "I'm speechless.",
+                            messageType: 'text'
+                        }
+                    });
+
+                    // We rely on polling or socket to deliver this to the user.
+                    // Since we don't have a full socket server integration in this route yet (it's client-side mostly),
+                    // the user will see it on next poll or refresh.
+                    // Ideally we'd emit here.
+                } catch (error) {
+                    console.error('Error generating AI response:', error);
+                }
+            })();
+        }
 
         return NextResponse.json(message, { status: 201 });
     } catch (error) {

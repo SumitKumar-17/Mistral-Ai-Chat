@@ -273,7 +273,7 @@ const DashboardPage = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const reactionPickerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch chats when component mounts
+  // Fetch chats and auto-select/create Mistral AI chat
   useEffect(() => {
     if (isLoading) return;
 
@@ -282,27 +282,59 @@ const DashboardPage = () => {
       return;
     }
 
-    const fetchChats = async () => {
+    const initMistralChat = async () => {
       try {
+        // 1. Fetch existing chats
         const response = await fetch('/api/chats', {
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}`
           }
         });
+
         if (response.ok) {
-          const data = await response.json();
-          setChats(data);
-          if (data.length > 0 && !selectedChat) {
-            // Optionally select first chat
-            // setSelectedChat(data[0]); 
+          const chatsData = await response.json();
+          setChats(chatsData);
+
+          // 2. Check for Mistral AI chat
+          const mistralChat = chatsData.find((c: any) => c.name === 'Mistral AI');
+
+          if (mistralChat) {
+            setSelectedChat(mistralChat);
+          } else {
+            // 3. If not found, search for Mistral AI user and create chat
+            const searchRes = await fetch('/api/search?q=Mistral', {
+              headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+            });
+            const searchData = await searchRes.json();
+            const aiUser = searchData.find((u: any) => u.username === 'Mistral AI');
+
+            if (aiUser) {
+              const createRes = await fetch('/api/chats', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${localStorage.getItem('token')}`
+                },
+                body: JSON.stringify({
+                  participantId: aiUser.id,
+                  isGroup: false
+                })
+              });
+
+              if (createRes.ok) {
+                const newChat = await createRes.json();
+                setChats(prev => [newChat, ...prev]);
+                setSelectedChat(newChat);
+              }
+            }
           }
         }
       } catch (error) {
-        console.error('Error fetching chats:', error);
+        console.error('Error initializing Mistral chat:', error);
       }
     };
 
-    fetchChats();
+    initMistralChat();
   }, [user, router, isLoading]);
 
   // Fetch messages when selected chat changes
@@ -343,6 +375,19 @@ const DashboardPage = () => {
           msg.id === newMessage.id ? { ...msg, ...newMessage } : msg
         )
       );
+      // Also append new messages if they are for the current chat
+      if (selectedChat && newMessage.chatId === selectedChat.id) {
+        setMessages(prev => {
+          const exists = prev.find(m => m.id === newMessage.id);
+          if (exists) return prev;
+          return [...prev, {
+            ...newMessage,
+            time: new Date(newMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isOwn: newMessage.senderId === user?.id,
+            isImage: newMessage.messageType === 'image'
+          }];
+        });
+      }
     });
 
     const typingCleanup = onTyping((data: { userId: string; isTyping: boolean }) => {
@@ -357,7 +402,7 @@ const DashboardPage = () => {
       newMessageCleanup?.();
       typingCleanup?.();
     };
-  }, [onNewMessage, onTyping]);
+  }, [onNewMessage, onTyping, selectedChat, user]);
 
   // Filter messages based on search and filters
   useEffect(() => {
@@ -681,109 +726,8 @@ const DashboardPage = () => {
 
   return (
     <div className="flex h-screen bg-gray-100">
-      {/* Sidebar */}
-      <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
-        {/* User Profile Header */}
-        <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center text-white font-semibold">
-                {user.username.charAt(0).toUpperCase()}
-              </div>
-              <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
-            </div>
-            <div>
-              <p className="font-semibold text-gray-900">{user.username}</p>
-              <p className="text-xs text-gray-500">Online</p>
-            </div>
-          </div>
-          <div className="flex space-x-2">
-            <button
-              onClick={() => router.push('/profile')}
-              className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full"
-            >
-              <UserCircle size={20} />
-            </button>
-            <button
-              onClick={handleLogout}
-              className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full"
-            >
-              <LogOut size={20} />
-            </button>
-          </div>
-        </div>
-
-        {/* Search Bar */}
-        <div className="p-3 border-b border-gray-200">
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search size={18} className="text-gray-400" />
-            </div>
-            <input
-              type="text"
-              placeholder="Search chats..."
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-            />
-          </div>
-        </div>
-
-        {/* Chat Tabs */}
-        <div className="flex border-b border-gray-200">
-          <button className="flex-1 py-3 px-4 text-center font-medium text-indigo-600 border-b-2 border-indigo-600">
-            Chats
-          </button>
-          <button className="flex-1 py-3 px-4 text-center font-medium text-gray-500 hover:text-gray-700">
-            Contacts
-          </button>
-        </div>
-
-        {/* Chat List */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="p-2">
-            {chats.map((chat) => (
-              <div
-                key={chat.id}
-                className={`flex items-center p-3 rounded-lg cursor-pointer mb-1 ${selectedChat?.id === chat.id ? 'bg-indigo-50' : 'hover:bg-gray-50'
-                  }`}
-                onClick={() => {
-                  setSelectedChat(chat);
-                  if (isConnected) {
-                    // joinChat(chat.id); // Assuming joinChat exists in context
-                  }
-                }}
-              >
-                <div className="relative flex-shrink-0">
-                  <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-semibold">
-                    {chat.name.charAt(0).toUpperCase()}
-                  </div>
-                  {chat.isGroup ? (
-                    <div className="absolute -bottom-1 -right-1 bg-indigo-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">
-                      <Users size={12} />
-                    </div>
-                  ) : null}
-                </div>
-                <div className="ml-3 flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-gray-900 truncate">{chat.name}</p>
-                    <span className="text-xs text-gray-500">{chat.time}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-gray-500 truncate">{chat.lastMessage}</p>
-                    {chat.unread > 0 && (
-                      <span className="inline-flex items-center justify-center w-5 h-5 text-xs font-semibold text-white bg-indigo-500 rounded-full">
-                        {chat.unread}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
+      {/* Main Chat Area - Full Width */}
+      <div className="flex-1 flex flex-col w-full">
         {/* Chat Header */}
         <div className="bg-white border-b border-gray-200 p-4 flex items-center justify-between">
           {selectedChat ? (
@@ -795,255 +739,194 @@ const DashboardPage = () => {
                 <div>
                   <p className="font-semibold text-gray-900">{selectedChat.name}</p>
                   <p className="text-xs text-gray-500">
-                    {selectedChat.isGroup ? 'Online members' : 'Online'}
+                    Always here to help
                   </p>
                 </div>
               </div>
               <div className="flex space-x-2">
                 <button
-                  onClick={() => setShowSearch(!showSearch)}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full"
+                  onClick={handleLogout}
+                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-gray-100 rounded-full"
+                  title="Logout"
                 >
-                  <Search size={20} />
-                </button>
-                <button
-                  onClick={() => router.push('/settings')}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full"
-                >
-                  <Settings size={20} />
-                </button>
-                <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full">
-                  <MoreVertical size={20} />
+                  <LogOut size={20} />
                 </button>
               </div>
             </>
           ) : (
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
-                <MessageSquare size={20} className="text-gray-500" />
-              </div>
-              <p className="font-semibold text-gray-900">Select a chat</p>
+              <p className="font-semibold text-gray-900">Loading Mistral AI...</p>
             </div>
           )}
         </div>
 
-        {/* Search Filters */}
-        {showSearch && (
-          <SearchFilters
-            filters={searchFilters}
-            setFilters={setSearchFilters}
-            onSearch={handleSearch}
-          />
-        )}
-
-        {/* Messages Container */}
-        <div className="flex-1 overflow-y-auto p-4 bg-gray-50 relative">
-          <div className="max-w-3xl mx-auto">
-            {selectedChat ? (
-              <>
-                {(showSearch ? filteredMessages : messages).map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex mb-4 group relative ${msg.isOwn ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg relative ${msg.isOwn
-                        ? 'bg-indigo-500 text-white rounded-tr-none'
-                        : 'bg-white text-gray-800 rounded-tl-none shadow-sm'
-                        }`}
-                    >
-                      {msg.content && <p className="text-sm">{msg.content}</p>}
-
-                      {msg.fileUrl && (
-                        <div className="mt-2">
-                          {msg.isImage ? (
-                            <div className="mt-2">
-                              <img
-                                src={msg.fileUrl}
-                                alt="Uploaded"
-                                className="max-w-full h-auto rounded-lg"
-                              />
-                            </div>
-                          ) : (
-                            <div className="mt-2 flex items-center p-2 bg-gray-100 rounded-lg">
-                              <File className="text-gray-500 mr-2" size={16} />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm truncate">{msg.fileName}</p>
-                                <p className="text-xs text-gray-500">
-                                  {(msg.fileSize / 1024).toFixed(1)} KB
-                                </p>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between mt-1">
-                        <p
-                          className={`text-xs ${msg.isOwn ? 'text-indigo-200' : 'text-gray-500'
-                            }`}
-                        >
-                          {msg.time}
-                        </p>
-                        {msg.isOwn && renderMessageStatus(msg)}
-                      </div>
-
-                      {msg.reactions && renderReactions(msg.reactions)}
-
-                      {/* Reaction picker button */}
-                      <div className="absolute -bottom-5 right-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
-                          className={`text-xs p-1 rounded-full ${msg.isOwn ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'
-                            }`}
-                        >
-                          <Smile size={12} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Reaction picker */}
-                    {showReactionPicker === msg.id && (
-                      <div className="absolute bottom-0 right-0 transform translate-x-full">
-                        <ReactionPicker
-                          onReact={handleReaction}
-                          messageId={msg.id}
-                        />
-                      </div>
-                    )}
+        {/* Messages Area */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+          {filteredMessages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`flex ${msg.isOwn ? 'justify-end' : 'justify-start'}`}
+            >
+              {!msg.isOwn && (
+                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-semibold mr-2 self-end mb-1">
+                  {msg.sender?.charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div
+                className={`max-w-[70%] rounded-2xl px-4 py-2 shadow-sm relative group ${msg.isOwn
+                  ? 'bg-indigo-500 text-white rounded-br-none'
+                  : 'bg-white text-gray-900 rounded-bl-none'
+                  }`}
+              >
+                {/* Message Content */}
+                {msg.isImage ? (
+                  <div className="mb-1">
+                    <img src={msg.fileUrl} alt="Shared image" className="max-w-full rounded-lg" />
                   </div>
-                ))}
-                {typingUsers.length > 0 && (
-                  <div className="flex mb-4 justify-start">
-                    <div className="max-w-xs lg:max-w-md px-4 py-2 rounded-lg bg-white text-gray-800 rounded-tl-none shadow-sm">
-                      <p className="text-sm text-gray-500 italic">Typing...</p>
-                    </div>
+                ) : msg.fileUrl ? (
+                  <div className="flex items-center p-2 bg-black/10 rounded-lg mb-1">
+                    <File size={20} className="mr-2" />
+                    <a href={msg.fileUrl} target="_blank" rel="noopener noreferrer" className="underline truncate">
+                      {msg.fileName || 'Attachment'}
+                    </a>
+                  </div>
+                ) : (
+                  <p className="text-sm">{msg.content}</p>
+                )}
+
+                {/* Message Info */}
+                <div className={`flex items-center justify-end space-x-1 mt-1 ${msg.isOwn ? 'text-indigo-100' : 'text-gray-400'
+                  }`}>
+                  <span className="text-[10px]">{msg.time}</span>
+                  {renderMessageStatus(msg)}
+                </div>
+
+                {/* Reactions Display */}
+                {renderReactions(msg.reactions)}
+
+                {/* Reaction Button (Hover) */}
+                <button
+                  onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
+                  className={`absolute -right-8 top-1/2 transform -translate-y-1/2 p-1 rounded-full bg-gray-100 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-200 shadow-sm ${msg.isOwn ? 'right-auto -left-8' : ''
+                    }`}
+                >
+                  <Smile size={16} />
+                </button>
+
+                {/* Reaction Picker Popover */}
+                {showReactionPicker === msg.id && (
+                  <div className="z-10">
+                    <ReactionPicker
+                      messageId={msg.id}
+                      onReact={handleReaction}
+                    />
                   </div>
                 )}
-                <div ref={messagesEndRef} />
-              </>
-            ) : (
-              <div className="flex items-center justify-center h-full">
-                <div className="text-center">
-                  <MessageSquare size={64} className="mx-auto text-gray-300" />
-                  <h3 className="mt-4 text-lg font-medium text-gray-900">Select a chat to start messaging</h3>
-                  <p className="mt-1 text-gray-500">Choose from your existing conversations</p>
+              </div>
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+
+          {/* Typing Indicator */}
+          {typingUsers.length > 0 && (
+            <div className="flex justify-start">
+              <div className="bg-white rounded-2xl rounded-bl-none px-4 py-2 shadow-sm">
+                <div className="flex space-x-1">
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
-        {/* Message Input */}
-        <div className="bg-white border-t border-gray-200 p-4 relative">
-          <div className="max-w-3xl mx-auto">
-            {/* Selected file preview */}
-            {selectedFile && (
-              <div className="mb-3 p-3 bg-gray-100 rounded-lg flex items-center justify-between">
-                <div className="flex items-center">
-                  {previewUrl ? (
-                    <img
-                      src={previewUrl}
-                      alt="Preview"
-                      className="w-12 h-12 object-cover rounded mr-3"
-                    />
-                  ) : (
-                    <File className="text-gray-500 mr-3" size={24} />
-                  )}
-                  <div>
-                    <p className="text-sm font-medium truncate max-w-xs">{selectedFile.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {(selectedFile.size / 1024).toFixed(1)} KB
-                    </p>
-                  </div>
+        {/* Input Area */}
+        <div className="bg-white border-t border-gray-200 p-4">
+          {/* File Preview */}
+          {selectedFile && (
+            <div className="mb-2 p-2 bg-gray-50 rounded-lg flex items-center justify-between">
+              <div className="flex items-center">
+                {previewUrl ? (
+                  <img src={previewUrl} alt="Preview" className="w-10 h-10 object-cover rounded mr-2" />
+                ) : (
+                  <File className="w-10 h-10 text-gray-400 mr-2" />
+                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-700 truncate max-w-xs">{selectedFile.name}</p>
+                  <p className="text-xs text-gray-500">{(selectedFile.size / 1024).toFixed(1)} KB</p>
                 </div>
-                <button
-                  onClick={removeSelectedFile}
-                  className="text-gray-500 hover:text-red-500"
-                >
-                  <XCircle size={20} />
-                </button>
               </div>
-            )}
-
-            <div className="flex items-center relative">
-              <button
-                className="p-2 text-gray-500 hover:text-gray-700 rounded-full"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Paperclip size={20} />
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  className="hidden"
-                  accept="image/*,application/pdf,.doc,.docx,.txt,.xls,.xlsx"
-                />
+              <button onClick={removeSelectedFile} className="text-gray-400 hover:text-red-500">
+                <XCircle size={20} />
               </button>
+            </div>
+          )}
+
+          <div className="flex items-end space-x-2">
+            <div className="flex-1 bg-gray-100 rounded-lg flex items-center p-2 relative">
               <button
                 onClick={toggleEmojiPicker}
-                className="p-2 text-gray-500 hover:text-gray-700 rounded-full"
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-full transition-colors"
               >
                 <Smile size={20} />
               </button>
-              <div className="flex-1 mx-2">
-                <textarea
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="Type a message..."
-                  className="w-full border border-gray-300 rounded-lg py-2 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
-                  rows={1}
-                />
-              </div>
+
+              {showEmojiPicker && (
+                <div ref={emojiPickerRef}>
+                  <EmojiPicker onSelect={addEmoji} onClose={() => setShowEmojiPicker(false)} />
+                </div>
+              )}
+
+              <input
+                type="text"
+                value={message}
+                onChange={(e) => {
+                  setMessage(e.target.value);
+                  if (!isTyping) {
+                    setIsTyping(true);
+                    // emitTyping(true);
+                  }
+                  // Debounce typing off
+                  setTimeout(() => {
+                    setIsTyping(false);
+                    // emitTyping(false);
+                  }, 2000);
+                }}
+                onKeyDown={handleKeyPress}
+                placeholder="Message Mistral AI..."
+                className="flex-1 bg-transparent border-none focus:ring-0 text-gray-900 placeholder-gray-500 px-2"
+              />
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                className="hidden"
+              />
               <button
-                onClick={handleSendMessage}
-                disabled={(!message.trim() && !selectedFile) || uploading}
-                className={`p-2 rounded-full ${(message.trim() || selectedFile) && !uploading
-                  ? 'bg-indigo-500 text-white hover:bg-indigo-600'
-                  : 'text-gray-400 cursor-not-allowed'
-                  }`}
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-full transition-colors"
               >
-                {uploading ? (
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                ) : (
-                  <Send size={20} />
-                )}
+                <Paperclip size={20} />
               </button>
             </div>
 
-            {/* Emoji Picker */}
-            {showEmojiPicker && (
-              <div ref={emojiPickerRef}>
-                <EmojiPicker
-                  onSelect={addEmoji}
-                  onClose={() => setShowEmojiPicker(false)}
-                />
-              </div>
-            )}
+            <button
+              onClick={handleSendMessage}
+              disabled={(message.trim() === '' && !selectedFile) || uploading}
+              className={`p-3 rounded-full flex items-center justify-center transition-colors ${message.trim() !== '' || selectedFile
+                ? 'bg-indigo-500 text-white hover:bg-indigo-600 shadow-md'
+                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                }`}
+            >
+              {uploading ? (
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              ) : (
+                <Send size={20} />
+              )}
+            </button>
           </div>
-        </div>
-      </div>
-
-      {/* Contact/Contact Info Panel - Shown when viewing contact info */}
-      <div className="hidden md:block w-80 bg-white border-l border-gray-200 p-4 overflow-y-auto">
-        <div className="text-center">
-          <div className="w-20 h-20 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-semibold mx-auto text-2xl">
-            {selectedChat?.name.charAt(0).toUpperCase()}
-          </div>
-          <h3 className="mt-3 font-semibold text-gray-900">{selectedChat?.name}</h3>
-          <p className="text-sm text-gray-500">
-            {selectedChat?.isGroup ? 'Group Chat' : 'Online'}
-          </p>
-        </div>
-
-        <div className="mt-6">
-          <h4 className="font-medium text-gray-900 mb-2">About</h4>
-          <p className="text-sm text-gray-600">
-            {selectedChat?.isGroup
-              ? 'This is a group conversation with multiple participants.'
-              : 'This contact has shared their profile with you.'}
-          </p>
         </div>
       </div>
     </div>
