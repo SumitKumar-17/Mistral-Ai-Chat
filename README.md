@@ -1,36 +1,171 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Chat Application - README
 
-## Getting Started
+This is a comprehensive chat application built with Next.js, TypeScript, Prisma, PostgreSQL, and Socket.IO.
 
-First, run the development server:
+## Features
+
+- Real-time messaging with WebSocket
+- User authentication (login/signup)
+- Group chats and direct messaging
+- Image/file sharing capabilities
+- Emoji picker and reactions
+- Message status indicators (read/delivered)
+- Message search and filtering
+- User profiles and settings
+- Responsive design for mobile and desktop
+
+## Tech Stack
+
+- **Frontend**: Next.js 14 with App Router, TypeScript
+- **Styling**: Tailwind CSS
+- **Database**: PostgreSQL with Prisma ORM
+- **Real-time**: Socket.IO
+- **State Management**: Zustand
+- **Icons**: Lucide React
+- **Notifications**: React Hot Toast
+
+## Installation
+
+1. Clone the repository
+2. Install dependencies:
+
+```bash
+npm install
+```
+
+3. Configure your database connection in `.env`:
+
+```env
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/chat_app?schema=public"
+JWT_SECRET="your_jwt_secret_key"
+```
+
+4. Run database migrations:
+
+```bash
+npx prisma migrate dev
+```
+
+5. Generate Prisma client:
+
+```bash
+npx prisma generate
+```
+
+6. Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Environment Variables
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `DATABASE_URL`: PostgreSQL connection string
+- `JWT_SECRET`: Secret key for JWT token generation
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Project Structure
 
-## Learn More
+```
+chat-app/
+├── src/
+│   ├── app/                 # Next.js App Router pages
+│   │   ├── api/             # API routes
+│   │   │   ├── auth/        # Authentication routes
+│   │   │   ├── upload/      # File upload routes
+│   │   │   └── socket/      # Socket.IO routes
+│   │   ├── dashboard/       # Main chat interface
+│   │   ├── login/           # Login page
+│   │   ├── register/        # Registration page
+│   │   ├── profile/         # User profile page
+│   │   ├── settings/        # Settings page
+│   │   └── layout.tsx       # Root layout
+│   ├── context/             # React contexts (Auth, Socket)
+│   ├── stores/              # Zustand stores
+│   ├── utils/               # Utility functions
+│   └── generated/           # Prisma-generated client
+├── prisma/
+│   └── schema.prisma        # Database schema
+├── public/                  # Static assets
+├── .env                     # Environment variables
+├── next.config.js           # Next.js configuration
+├── tailwind.config.js       # Tailwind CSS configuration
+└── package.json
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Testing
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+To run the application:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Ensure PostgreSQL is running locally
+2. Run the development server: `npm run dev`
+3. Access the application at `http://localhost:3000`
 
-## Deploy on Vercel
+## Deployment
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Vercel (Recommended)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Push your code to a Git repository
+2. Connect your repository to Vercel
+3. Add environment variables in Vercel dashboard
+4. Configure your database connection for production
+
+### Docker (Alternative)
+
+```dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+
+RUN npx prisma generate
+
+EXPOSE 3000
+CMD ["npm", "run", "start"]
+```
+
+## API Routes
+
+- `POST /api/auth?type=login` - User login
+- `POST /api/auth?type=register` - User registration
+- `POST /api/upload` - File upload
+- `GET /api/profile` - Get user profile
+- `PUT /api/profile` - Update user profile
+- `DELETE /api/profile` - Delete user account
+
+## Database Schema
+
+The application uses the following models:
+
+- **User**: User account information
+- **Chat**: Individual or group chat rooms
+- **Message**: Chat messages
+- **ChatMembership**: User-chat relationships
+- **UserStatus**: User online status
+
+## Socket Events
+
+- `join`: User joins the system
+- `privateMessage`: Send a private message
+- `groupMessage`: Send a group message
+- `typingStart` / `typingStop`: Typing indicators
+- `messageRead`: Mark message as read
+
+## Security Considerations
+
+- Passwords are hashed using bcrypt
+- JWT tokens for authentication
+- Input validation on API routes
+- File type validation for uploads
+- Rate limiting should be implemented in production
+
+## Next Steps
+
+- Add unit and integration tests
+- Implement end-to-end encryption
+- Add video calling functionality
+- Improve message threading
+- Add push notifications
+- Implement message archiving
